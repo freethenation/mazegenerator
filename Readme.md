@@ -1,3 +1,14 @@
+Fork that creates a themed maze using openai image generation
+
+example command
+```bash
+OPENAI_API_KEY="REDACT" python themed_maze.py --theme 'knock knock joke with empty space in middle so you have lots of possible paths. ' --expand uniform --debug -W 30 -H 30 -s 25
+```
+Then look at ./out/1766896428_*_themed_solved.png and make sure "start" and "end" are incorrect place and there are only one of each.
+
+
+
+
 # Maze generator
 
 **Generate mazes of different shapes and arbitrary sizes**

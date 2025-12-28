@@ -209,7 +209,9 @@ def _png_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 COLORING_BOOK_MAZE_PROMPT = """
-Add "{theme}" themed coloring book decorations around this maze.
+Add themed coloring book decorations around this maze.
+
+Theme: {theme}
 
 RULES:
 - Replace the GREEN DOT with the word "Start" in black text
@@ -217,6 +219,7 @@ RULES:
 - Add ONE large focal decoration related to the theme
 - Balance remaining space with smaller decorations — avoid clutter
 - All lines and text must be BLACK
+- No text unless in quotes
 
 DO NOT:
 - Cover the RED LINE
