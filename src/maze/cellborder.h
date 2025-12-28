@@ -3,13 +3,17 @@
 
 #include <string>
 
+class Maze;
+
 class CellBorder {
+  friend class Maze;
  public:
   virtual std::string GnuplotPrintString(const std::string&) const = 0;
   virtual std::string SVGPrintString(const std::string&) const = 0;
 };
 
 class LineBorder : public CellBorder {
+  friend class Maze;
  public:
   virtual std::string GnuplotPrintString(const std::string&) const;
   virtual std::string SVGPrintString(const std::string&) const;
@@ -21,6 +25,7 @@ class LineBorder : public CellBorder {
 };
 
 class ArcBorder : public CellBorder {
+  friend class Maze;
  public:
   virtual std::string GnuplotPrintString(const std::string&) const;
   virtual std::string SVGPrintString(const std::string&) const;

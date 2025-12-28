@@ -12,7 +12,7 @@ LineBorder::LineBorder(std::tuple<double, double, double, double> xy) {
 std::string LineBorder::GnuplotPrintString(const std::string& color) const {
   return "set arrow from " + std::to_string(x1_) + "," + std::to_string(y1_) +
          " to " + std::to_string(x2_) + "," + std::to_string(y2_) +
-         " nohead lc'" + color + "' lw 2";
+         " nohead lc'" + color + "' lw 5";
 }
 
 std::string LineBorder::SVGPrintString(const std::string& color) const {
@@ -31,7 +31,7 @@ std::string ArcBorder::GnuplotPrintString(const std::string& color) const {
          std::to_string(theta2_) + "] " + std::to_string(cx_) + "+cos(t)*" +
          std::to_string(r_) + "," + std::to_string(cy_) + "+sin(t)*" +
          std::to_string(r_) + " w l lc'" + color +
-         "' lw 2 notitle;unset parametric";
+         "' lw 5 notitle;unset parametric";
 }
 
 std::string ArcBorder::SVGPrintString(const std::string& color) const {

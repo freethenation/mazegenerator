@@ -28,6 +28,8 @@ class Maze {
   void Solve(const std::vector<std::pair<int, int>>&);
   virtual std::tuple<double, double, double, double> GetCoordinateBounds()
       const = 0;
+  std::pair<double, double> GetVertexCenter(int vertex_index) const;
+  std::vector<int> GetSolutionPath() const;
 };
 
 #endif /* end of include guard: MAZE_H */

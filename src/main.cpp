@@ -19,7 +19,7 @@ void usage(std::ostream &out) {
   out << "Usage: mazegen [--help] [-m <maze type>] [-a <algorithm type>]"
       << std::endl;
   out << "               [-s <size> | -w <width> -h <height>]" << std::endl;
-  out << "               [-t <output type>] [-o <output prefix>]" << std::endl;
+  out << "               [-t <output type>] [-o <output prefix>] [-l]" << std::endl;
   out << "               [-f <graph description file (for m=5)>]" << std::endl;
 
   out << std::endl;
@@ -66,13 +66,16 @@ void usage(std::ostream &out) {
       << "1: png output using gnuplot (.plt) intermediate " << std::endl;
   out << "  -o      "
       << "Prefix for .svg, .plt and .png outputs (default: maze)" << std::endl;
+  out << "  -l      "
+      << "Enable solution path visualization (default: off)" << std::endl;
 }
 
 int main(int argc, char *argv[]) {
   std::string outputprefix = "maze", infile = "";
   std::map<std::string, int> optionmap{{"-m", 0},  {"-a", 0},     {"-s", 20},
                                        {"-w", 20}, {"-h", 20},    {"-o", 0},
-                                       {"-f", 0},  {"--help", 0}, {"-t", 0}};
+                                       {"-f", 0},  {"--help", 0}, {"-t", 0},
+                                       {"-l", 0}};
 
   for (int i = 1; i < argc; i++) {
     if (optionmap.find(argv[i]) == optionmap.end()) {
@@ -100,6 +103,9 @@ int main(int argc, char *argv[]) {
     } else if (strcmp("--help", argv[i]) == 0) {
       usage(std::cout);
       return 0;
+    } else if (strcmp("-l", argv[i]) == 0) {
+      optionmap["-l"] = 1;
+      continue;
     }
 
     if (i + 1 == argc) {
@@ -254,11 +260,11 @@ int main(int argc, char *argv[]) {
   if (optionmap["-t"] == 0) {
     std::cout << "Rendering maze to '" << outputprefix << ".svg'..."
               << std::endl;
-    maze->PrintMazeSVG(outputprefix);
+    maze->PrintMazeSVG(outputprefix, optionmap["-l"]);
   } else {
     std::cout << "Exporting maze plotting parameters to '" << outputprefix
               << ".plt' ..." << std::endl;
-    maze->PrintMazeGnuplot(outputprefix);
+    maze->PrintMazeGnuplot(outputprefix, optionmap["-l"]);
     std::cout << "Rendering maze to '" << outputprefix
               << ".png' using gnuplot..." << std::endl;
     system(("gnuplot '" + outputprefix + ".plt'").c_str());

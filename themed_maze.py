@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""
-Themed Maze Generator CLI
-
-- Normalizes mazegen PNG into crisp black line art on white before sending to OpenAI.
-- Builds a binary alpha mask (255=protected maze region, 0=editable padding) with optional dilation.
-- OpenAI edits only the unprotected areas around the maze.
-
-Debug outputs (if --debug):
-  1_expanded_pre_resize.png
-  2_mask_pre_resize.png
-  3_expanded_post_resize.png
-  4_mask_post_resize.png
-  5_themed_from_openai.png
-"""
-
 import argparse
 import base64
 import io
@@ -22,19 +7,11 @@ import random
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
-
-try:
-    from openai import OpenAI
-except ImportError:
-    print("Error: openai package not installed. Run: pip install openai")
-    sys.exit(1)
-
-try:
-    from PIL import Image, ImageFilter
-except ImportError:
-    print("Error: pillow package not installed. Run: pip install pillow")
-    sys.exit(1)
+import numpy as np
+from openai import OpenAI
+from PIL import Image, ImageFilter
 
 EXPAND_MODES = ["uniform", "scene-bottom", "scene-top"]
 TARGET_SIZE = (1024, 1536)  # portrait
@@ -45,25 +22,12 @@ BASE_PADDING = 75
 def parse_args():
     p = argparse.ArgumentParser(description="Generate themed maze coloring book pages (uploads real maze).")
     p.add_argument("--theme", required=True)
-    p.add_argument("--prompt", help="Custom prompt. Use {theme} placeholder.")
 
-    p.add_argument("--model", default="gpt-image-1", help="Recommended: gpt-image-1")
-    p.add_argument("--quality", choices=["low", "medium", "high", "auto"], default="high")
-    p.add_argument(
-        "--input-fidelity",
-        choices=["low", "high"],
-        default="high",
-        help="Only applied when model is gpt-image-1.",
-    )
+    p.add_argument("--model", default="gpt-image-1.5", help="Recommended: gpt-image-1.5")
+    p.add_argument("--quality", choices=["low", "medium", "high", "auto"], default="medium")
     p.add_argument("--expand", choices=EXPAND_MODES + ["random"], default="random")
     p.add_argument("--dilate", type=int, default=24,
                    help="Pixels to expand protected maze region (prevents edge bleed).")
-
-    # Make uploaded maze darker/crisper
-    p.add_argument("--threshold", type=int, default=215,
-                   help="0-255. Pixels darker than this become black; others become white.")
-    p.add_argument("--line-thicken", type=int, default=3,
-                   help="Odd kernel size to thicken maze lines (1=off). e.g. 3,5,7")
 
     # mazegen passthrough
     p.add_argument(
@@ -86,11 +50,11 @@ def parse_args():
             3: Loop-erased random walk
             4: Prim's algorithm""",
     )
-    p.add_argument("-s", "--size", type=int, default=10,
+    p.add_argument("-s", "--size", type=int, default=15,
                    help="Size for non-rectangular mazes (types 1-6)")
-    p.add_argument("-W", "--width", type=int, default=10,
+    p.add_argument("-W", "--width", type=int, default=15,
                    help="Width for rectangular mazes (type 0)")
-    p.add_argument("-H", "--height", type=int, default=10,
+    p.add_argument("-H", "--height", type=int, default=15,
                    help="Height for rectangular mazes (type 0)")
 
     p.add_argument("-o", "--output", default=None,
@@ -113,6 +77,8 @@ def generate_maze(args, script_dir: Path) -> Path:
         cmd.extend(["-w", str(args.width), "-h", str(args.height)])
     else:
         cmd.extend(["-s", str(args.size)])
+    
+    cmd.extend(["-l"]) # always draw solution
 
     print(f"Generating maze: {' '.join(cmd)}")
     try:
@@ -129,26 +95,42 @@ def generate_maze(args, script_dir: Path) -> Path:
     return png_path
 
 
-def normalize_maze_lineart(maze_path: Path, threshold: int, line_thicken: int) -> Image.Image:
+def normalize_maze_lineart(maze_path: Path) -> Image.Image:
     """
-    Convert mazegen output into crisp black lines on white (RGB).
-    This is what we upload to OpenAI (so it sees YOUR maze).
+    Load the maze image - lines should already be thick and crisp from mazegen.
     """
-    img = Image.open(maze_path).convert("L")
+    return Image.open(maze_path).convert("RGB")
 
-    thr = max(0, min(255, int(threshold)))
-    bw = img.point(lambda p: 0 if p < thr else 255, mode="L")  # 0=black, 255=white
 
-    k = int(line_thicken)
-    if k and k > 1:
-        if k % 2 == 0:
-            k += 1
-        # Thicken black lines: invert -> maxfilter -> invert back
-        inv = Image.eval(bw, lambda p: 255 - p)
-        inv = inv.filter(ImageFilter.MaxFilter(size=max(1, k)))
-        bw = Image.eval(inv, lambda p: 255 - p)
+def remove_colored_pixels(img: Image.Image) -> Image.Image:
+    """
+    Remove colored pixels (red, green, blue).
+    For each color, only remove if the dominant channel is bright (>= 128)
+    and significantly stronger than the other channels.
+    """
+    img_array = np.array(img)
 
-    return Image.merge("RGB", (bw, bw, bw))
+    # Extract color channels
+    r = img_array[:,:,0]
+    g = img_array[:,:,1]
+    b = img_array[:,:,2]
+
+    margin = 50
+
+    # Red: R is bright and dominant
+    red_mask = (r >= 128) & (r > g + margin) & (r > b + margin)
+
+    # Green: G is bright and dominant
+    green_mask = (g >= 128) & (g > r + margin) & (g > b + margin)
+
+    # Blue: B is bright and dominant
+    blue_mask = (b >= 128) & (b > r + margin) & (b > g + margin)
+
+    # Remove colored pixels
+    color_mask = red_mask | green_mask | blue_mask
+    img_array[color_mask] = [255, 255, 255]
+
+    return Image.fromarray(img_array)
 
 
 def _binary_alpha_mask_rgba(size, protected_rect, dilate_px: int) -> Image.Image:
@@ -226,19 +208,23 @@ def _png_bytes(img: Image.Image) -> bytes:
     img.save(buf, format="PNG", optimize=True, compress_level=9)
     return buf.getvalue()
 
+COLORING_BOOK_MAZE_PROMPT = """
+Add "{theme}" themed coloring book decorations around this maze.
 
-def build_prompt(theme: str, custom: str | None) -> str:
-    if custom:
-        return custom.format(theme=theme)
-    return (
-        f"Create a {theme} themed coloring-book scene ONLY in the white padding area OUTSIDE the central maze. "
-        "Add themed characters and simple elements in the margins, leaving plenty of blank areas for coloring. "
-        "Black line art on white background. "
-        "Add 'Start' and 'End' labels near the two gaps/openings in the maze border. "
-        "CRITICAL: The maze in the center must remain COMPLETELY UNTOUCHED - do not draw anything on, over, or crossing the maze lines or paths. "
-        "Do NOT add any new maze patterns, grids, or labyrinth-like elements anywhere. "
-        "Do NOT add any border or frame around the maze."
-    )
+RULES:
+- Replace the GREEN DOT with the word "Start" in black text
+- Replace the BLUE DOT with the word "End" in black text
+- Add ONE large focal decoration related to the theme
+- Balance remaining space with smaller decorations — avoid clutter
+- All lines and text must be BLACK
+
+DO NOT:
+- Cover the RED LINE
+- Add any border or frame around the maze
+"""
+
+def build_prompt(theme: str) -> str:
+    return COLORING_BOOK_MAZE_PROMPT.format(theme=theme)
 
 
 def transform_maze(maze_path: Path, args) -> Path:
@@ -248,15 +234,13 @@ def transform_maze(maze_path: Path, args) -> Path:
 
     client = OpenAI()
 
-    maze_lineart = normalize_maze_lineart(
-        maze_path, threshold=args.threshold, line_thicken=args.line_thicken
-    )
+    maze_lineart = normalize_maze_lineart(maze_path)
 
     expanded_img, mask_img, _ = expand_canvas_and_create_mask(
         maze_lineart, args.expand, dilate_px=args.dilate, debug=args.debug
     )
 
-    prompt = build_prompt(args.theme, args.prompt)
+    prompt = build_prompt(args.theme)
 
     expanded_png = _png_bytes(expanded_img)
     mask_png = _png_bytes(mask_img)
@@ -282,7 +266,7 @@ def transform_maze(maze_path: Path, args) -> Path:
             background="opaque",
         )
         if args.model == "gpt-image-1":
-            kwargs["input_fidelity"] = args.input_fidelity
+            kwargs["input_fidelity"] = "high"
 
         try:
             result = client.images.edit(**kwargs)
@@ -297,10 +281,21 @@ def transform_maze(maze_path: Path, args) -> Path:
         debug_dir = Path("out/debug")
         debug_dir.mkdir(parents=True, exist_ok=True)
         themed.save(debug_dir / "5_themed_from_openai.png")
+        print(f"Debug: Themed image with colors saved to {debug_dir / '5_themed_from_openai.png'}")
 
+    # Save version WITH solution (keeps colors)
+    solved_path = Path(f"{args.output}_themed_solved.png")
+    solved_path.parent.mkdir(parents=True, exist_ok=True)
+    themed.save(solved_path)
+    print(f"Saved with solution: {solved_path}")
+
+    # Remove colored pixels (red, green, blue) from themed image
+    final = remove_colored_pixels(themed)
+
+    # Save final clean image (without colors)
     out_path = Path(f"{args.output}_themed.png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    themed.save(out_path)
+    final.save(out_path)
     print(f"Saved: {out_path}")
     return out_path
 
@@ -309,11 +304,16 @@ def main():
     args = parse_args()
     script_dir = Path(__file__).parent.resolve()
 
-    # Default output based on theme
-    if args.output is None:
-        args.output = "out/" + args.theme.lower().replace(" ", "_")
+    # Generate timestamp prefix (seconds since epoch)
+    timestamp = int(datetime.now().timestamp())
 
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    # Default output based on theme with timestamp
+    if args.output is None:
+        theme_slug = args.theme.lower().replace(" ", "_")
+        args.output = f"out/{timestamp}_{theme_slug}"
+
+    # Ensure out directory exists
+    Path("out").mkdir(exist_ok=True)
 
     maze_path = generate_maze(args, script_dir)
     print(f"Original maze saved: {maze_path}")
